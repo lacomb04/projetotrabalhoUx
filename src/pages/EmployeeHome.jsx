@@ -8,6 +8,8 @@ import Badge from "../components/ui/Badge";
 import { Link } from "react-router-dom";
 import styled from "styled-components";
 import ConectaBotChat from "../components/ConectaBotChat";
+import SatisfactionSurvey from "../components/SatisfactionSurvey";
+import Modal from "../components/ui/Modal";
 
 const STATUS_FLOW = ["open", "in_progress", "waiting", "resolved", "closed"];
 const STATUS_LABEL = {
@@ -74,6 +76,7 @@ export default function EmployeeHome({ user, searchTerm }) {
   });
   const [now, setNow] = useState(Date.now());
   const [showAIChat, setShowAIChat] = useState(false);
+  const [evaluatingTicketId, setEvaluatingTicketId] = useState(null);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -159,6 +162,63 @@ export default function EmployeeHome({ user, searchTerm }) {
   }, [tickets, normalizedSearch]);
   const activeTickets = filteredTickets.filter((t) => t.status !== "closed");
   const closedTickets = filteredTickets.filter((t) => t.status === "closed");
+
+  async function handleSubmitSatisfaction(ticketId, scores) {
+    const { error } = await supabase
+      .from("tickets")
+      .update({
+        satisfaction_csat: scores.csat,
+        satisfaction_ces: scores.ces,
+        satisfaction_nps: scores.nps,
+        satisfaction_comment: scores.comment,
+        satisfaction_submitted_at: new Date().toISOString(),
+      })
+      .eq("id", ticketId);
+
+    if (error) {
+      alert("Erro ao enviar avaliação. Tente novamente.");
+      return;
+    }
+
+    // Atualiza o ticket localmente
+    setTickets((prev) =>
+      prev.map((t) =>
+        t.id === ticketId
+          ? {
+              ...t,
+              satisfaction_csat: scores.csat,
+              satisfaction_ces: scores.ces,
+              satisfaction_nps: scores.nps,
+              satisfaction_comment: scores.comment,
+              satisfaction_submitted_at: new Date().toISOString(),
+            }
+          : t
+      )
+    );
+
+    setEvaluatingTicketId(null);
+    alert("Avaliação enviada com sucesso! Obrigado pelo seu feedback.");
+  }
+
+  // Resumo das avaliações do usuário
+  const mySatisfactions = useMemo(
+    () => tickets.filter((t) => t.satisfaction_submitted_at),
+    [tickets]
+  );
+  const mySatisfactionStats = useMemo(() => {
+    if (!mySatisfactions.length) return null;
+    const csat = mySatisfactions
+      .map((x) => x.satisfaction_csat)
+      .filter(Boolean);
+    const ces = mySatisfactions.map((x) => x.satisfaction_ces).filter(Boolean);
+    const nps = mySatisfactions.map((x) => x.satisfaction_nps).filter(Boolean);
+    return {
+      avgCsat: csat.length ? csat.reduce((a, b) => a + b, 0) / csat.length : 0,
+      avgCes: ces.length ? ces.reduce((a, b) => a + b, 0) / ces.length : 0,
+      avgNps: nps.length ? nps.reduce((a, b) => a + b, 0) / nps.length : 0,
+      count: mySatisfactions.length,
+    };
+  }, [mySatisfactions]);
 
   return (
     <div>
@@ -419,96 +479,184 @@ export default function EmployeeHome({ user, searchTerm }) {
                 : null;
               const hasResponse = Boolean(t.first_response_at);
               const hasResolution = Boolean(t.resolved_at);
+              const hasEvaluation = Boolean(t.satisfaction_submitted_at);
+              const isEvaluating = evaluatingTicketId === t.id;
+
               return (
-                <TicketCard
-                  key={t.id}
-                  style={{
-                    borderColor: "#22c55e",
-                    boxShadow: "0 0 0 4px rgba(34,197,94,0.25)",
-                    background: "#f3f4f6",
-                  }}
-                >
-                  <div className="stack-between">
-                    <h3 style={{ margin: 0, fontSize: "1.2rem" }}>{t.title}</h3>
-                    <Badge tone="neutral">
-                      {STATUS_LABEL[t.status] || t.status}
-                    </Badge>
-                  </div>
-                  <p>
-                    <strong>Categoria:</strong> {t.category} •{" "}
-                    <strong>Prioridade:</strong> {t.priority}
-                  </p>
-                  <p>
-                    <strong>Criado em:</strong>{" "}
-                    {new Date(t.created_at).toLocaleString()}
-                  </p>
-                  <ProgressTrack>
-                    {STATUS_FLOW.map((status, index) => {
-                      const active = index <= currentIndex;
-                      return (
-                        <React.Fragment key={status}>
-                          <ProgressNode active={active}>
-                            <NodeDot active={active} />
-                            <span style={{ marginTop: "4px" }}>
-                              {STATUS_LABEL[status]}
-                            </span>
-                          </ProgressNode>
-                          {index < STATUS_FLOW.length - 1 && (
-                            <Connector complete={index < currentIndex} />
-                          )}
-                        </React.Fragment>
-                      );
-                    })}
-                  </ProgressTrack>
-                  <div
-                    className="stack-between"
-                    style={{ marginTop: "var(--space-2)" }}
+                <React.Fragment key={t.id}>
+                  <TicketCard
+                    style={{
+                      borderColor: hasEvaluation ? "#22c55e" : "#f59e0b",
+                      boxShadow: hasEvaluation
+                        ? "0 0 0 4px rgba(34,197,94,0.25)"
+                        : "0 0 0 4px rgba(245,158,11,0.25)",
+                      background: "#f3f4f6",
+                    }}
                   >
-                    <div
-                      className="center-column"
-                      style={{ alignItems: "flex-start", gap: "6px" }}
-                    >
-                      <span>
-                        <strong>Tempo para resposta:</strong>{" "}
-                        {hasResponse ? "✅ " : ""}
-                        {remainingResponse !== null
-                          ? formatDuration(remainingResponse)
-                          : "—"}
-                      </span>
-                      <span>
-                        <strong>Tempo para resolução:</strong>{" "}
-                        {hasResolution ? "✅ " : ""}
-                        {remainingResolution !== null
-                          ? formatDuration(remainingResolution)
-                          : "—"}
-                      </span>
+                    <div className="stack-between">
+                      <h3 style={{ margin: 0, fontSize: "1.2rem" }}>
+                        {t.title}
+                      </h3>
+                      <div className="stack" style={{ gap: "var(--space-2)" }}>
+                        <Badge tone="neutral">
+                          {STATUS_LABEL[t.status] || t.status}
+                        </Badge>
+                        {hasEvaluation && (
+                          <Badge tone="success">✅ Avaliado</Badge>
+                        )}
+                      </div>
                     </div>
+                    <p>
+                      <strong>Categoria:</strong> {t.category} •{" "}
+                      <strong>Prioridade:</strong> {t.priority}
+                    </p>
+                    <p>
+                      <strong>Criado em:</strong>{" "}
+                      {new Date(t.created_at).toLocaleString()}
+                    </p>
+
+                    {/* Exibir avaliação se já foi feita */}
+                    {hasEvaluation && (
+                      <div
+                        style={{
+                          padding: "var(--space-3)",
+                          background: "#e0f2fe",
+                          borderRadius: "8px",
+                          marginTop: "var(--space-2)",
+                        }}
+                      >
+                        <strong>Sua avaliação:</strong>
+                        <div
+                          style={{
+                            marginTop: "var(--space-2)",
+                            fontSize: "0.875rem",
+                          }}
+                        >
+                          <span>📊 CSAT: {t.satisfaction_csat}/5 • </span>
+                          <span>⚡ CES: {t.satisfaction_ces}/7 • </span>
+                          <span>💬 NPS: {t.satisfaction_nps}/10</span>
+                        </div>
+                        {t.satisfaction_comment && (
+                          <p
+                            style={{
+                              marginTop: "var(--space-2)",
+                              fontSize: "0.875rem",
+                            }}
+                          >
+                            <em>"{t.satisfaction_comment}"</em>
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    <ProgressTrack>
+                      {STATUS_FLOW.map((status, index) => {
+                        const active = index <= currentIndex;
+                        return (
+                          <React.Fragment key={status}>
+                            <ProgressNode active={active}>
+                              <NodeDot active={active} />
+                              <span style={{ marginTop: "4px" }}>
+                                {STATUS_LABEL[status]}
+                              </span>
+                            </ProgressNode>
+                            {index < STATUS_FLOW.length - 1 && (
+                              <Connector complete={index < currentIndex} />
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
+                    </ProgressTrack>
                     <div
-                      className="center-column"
-                      style={{ alignItems: "flex-end", gap: "var(--space-2)" }}
+                      className="stack-between"
+                      style={{ marginTop: "var(--space-2)" }}
                     >
-                      <Button
-                        as={Link}
-                        to={`/ticket/${t.id}`}
-                        variant="primary"
+                      <div
+                        className="center-column"
+                        style={{ alignItems: "flex-start", gap: "6px" }}
                       >
-                        Ver detalhes
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleDelete(t.id)}
-                        style={{ color: "#ef4444" }}
+                        <span>
+                          <strong>Tempo para resposta:</strong>{" "}
+                          {hasResponse ? "✅ " : ""}
+                          {remainingResponse !== null
+                            ? formatDuration(remainingResponse)
+                            : "—"}
+                        </span>
+                        <span>
+                          <strong>Tempo para resolução:</strong>{" "}
+                          {hasResolution ? "✅ " : ""}
+                          {remainingResolution !== null
+                            ? formatDuration(remainingResolution)
+                            : "—"}
+                        </span>
+                      </div>
+                      <div
+                        className="center-column"
+                        style={{
+                          alignItems: "flex-end",
+                          gap: "var(--space-2)",
+                        }}
                       >
-                        Excluir chamado
-                      </Button>
+                        <Button
+                          as={Link}
+                          to={`/ticket/${t.id}`}
+                          variant="primary"
+                        >
+                          Ver detalhes
+                        </Button>
+                        {!hasEvaluation && (
+                          <Button
+                            variant="soft"
+                            onClick={() => setEvaluatingTicketId(t.id)}
+                          >
+                            ⭐ Avaliar atendimento
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDelete(t.id)}
+                          style={{ color: "#ef4444" }}
+                        >
+                          Excluir chamado
+                        </Button>
+                      </div>
                     </div>
-                  </div>
-                </TicketCard>
+                  </TicketCard>
+
+                  {/* Formulário de avaliação inline */}
+                  {isEvaluating && (
+                    <div
+                      style={{
+                        gridColumn: "1 / -1",
+                        marginTop: "-var(--space-4)",
+                      }}
+                    >
+                      <SatisfactionSurvey
+                        onSubmit={(scores) =>
+                          handleSubmitSatisfaction(t.id, scores)
+                        }
+                        onCancel={() => setEvaluatingTicketId(null)}
+                      />
+                    </div>
+                  )}
+                </React.Fragment>
               );
             })}
           </div>
         </div>
+      )}
+
+      {/* Modal de avaliação */}
+      {evaluatingTicketId && (
+        <Modal onClose={() => setEvaluatingTicketId(null)}>
+          <SatisfactionSurvey
+            onSubmit={(scores) =>
+              handleSubmitSatisfaction(evaluatingTicketId, scores)
+            }
+            onCancel={() => setEvaluatingTicketId(null)}
+          />
+        </Modal>
       )}
 
       {/* Botão flutuante para abrir o ConectaBot (IA) */}

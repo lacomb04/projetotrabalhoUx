@@ -241,6 +241,8 @@ export default function BI() {
   const [categoryData, setCategoryData] = useState([]);
   const [statusBreakdown, setStatusBreakdown] = useState([]);
   const [insights, setInsights] = useState([]);
+  const [satisfactions, setSatisfactions] = useState([]);
+  const [satisfactionStats, setSatisfactionStats] = useState(null);
 
   useEffect(() => {
     let active = true;
@@ -278,6 +280,27 @@ export default function BI() {
     }
 
     loadBI();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    async function loadSatisfactions() {
+      const { data: satData } = await supabase
+        .from("tickets")
+        .select("id, title, satisfaction_csat, satisfaction_ces, satisfaction_nps, satisfaction_comment, satisfaction_submitted_at, created_at")
+        .not("satisfaction_submitted_at", "is", null)
+        .order("satisfaction_submitted_at", { ascending: false });
+
+      if (active && satData) {
+        setSatisfactions(satData);
+        setSatisfactionStats(calcSatisfactionStats(satData));
+      }
+    }
+
+    loadSatisfactions();
     return () => {
       active = false;
     };
@@ -365,6 +388,68 @@ export default function BI() {
               </MetricCard>
             ))}
           </MetricsGrid>
+
+          {/* Indicadores de satisfação */}
+          {satisfactionStats && (
+            <MetricsGrid>
+              <MetricCard>
+                <MetricLabel>CSAT médio</MetricLabel>
+                <MetricValue>{satisfactionStats.avgCsat.toFixed(2)} / 5</MetricValue>
+                <MetricDelta tone="info">{satisfactionStats.count} avaliações</MetricDelta>
+              </MetricCard>
+              <MetricCard>
+                <MetricLabel>CES médio</MetricLabel>
+                <MetricValue>{satisfactionStats.avgCes.toFixed(2)} / 7</MetricValue>
+                <MetricDelta tone="info">{satisfactionStats.count} avaliações</MetricDelta>
+              </MetricCard>
+              <MetricCard>
+                <MetricLabel>NPS médio</MetricLabel>
+                <MetricValue>{satisfactionStats.avgNps.toFixed(2)} / 10</MetricValue>
+                <MetricDelta tone="info">{satisfactionStats.count} avaliações</MetricDelta>
+              </MetricCard>
+            </MetricsGrid>
+          )}
+
+          {/* Últimas avaliações */}
+          {satisfactions.length > 0 && (
+            <Panel>
+              <PanelTitle>Últimas avaliações de satisfação</PanelTitle>
+              <div style={{ display: "grid", gap: 16 }}>
+                {satisfactions.slice(0, 8).map((s) => (
+                  <div
+                    key={s.id}
+                    style={{
+                      background: "#fff",
+                      borderRadius: 12,
+                      padding: 14,
+                      border: "1px solid #e0e7ef",
+                      boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 6,
+                    }}
+                  >
+                    <div style={{ fontWeight: 600, color: "#0f172a" }}>
+                      {s.title || `Ticket #${s.id}`}
+                      <span style={{ fontWeight: 400, color: "#64748b", marginLeft: 8, fontSize: 12 }}>
+                        {new Date(s.satisfaction_submitted_at).toLocaleString()}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 14, color: "#475569" }}>
+                      <span>📊 CSAT: <b>{s.satisfaction_csat}</b> / 5</span>{" • "}
+                      <span>⚡ CES: <b>{s.satisfaction_ces}</b> / 7</span>{" • "}
+                      <span>💬 NPS: <b>{s.satisfaction_nps}</b> / 10</span>
+                    </div>
+                    {s.satisfaction_comment && (
+                      <div style={{ fontStyle: "italic", color: "#334155", fontSize: 13, marginTop: 2 }}>
+                        "{s.satisfaction_comment}"
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </Panel>
+          )}
 
           <Panel>
             <PanelTitle>Volume de chamados (últimos 6 meses)</PanelTitle>
@@ -603,4 +688,17 @@ function formatDelta(current, previous) {
   const delta = current - previous;
   const pct = Math.round((delta / previous) * 100);
   return `${pct >= 0 ? "+" : ""}${pct}%`;
+}
+
+function calcSatisfactionStats(list) {
+  if (!list.length) return { avgCsat: 0, avgCes: 0, avgNps: 0, count: 0 };
+  const csat = list.map(x => x.satisfaction_csat).filter(Boolean);
+  const ces = list.map(x => x.satisfaction_ces).filter(Boolean);
+  const nps = list.map(x => x.satisfaction_nps).filter(Boolean);
+  return {
+    avgCsat: csat.length ? csat.reduce((a, b) => a + b, 0) / csat.length : 0,
+    avgCes: ces.length ? ces.reduce((a, b) => a + b, 0) / ces.length : 0,
+    avgNps: nps.length ? nps.reduce((a, b) => a + b, 0) / nps.length : 0,
+    count: list.length,
+  };
 }
